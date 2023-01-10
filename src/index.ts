@@ -1,6 +1,6 @@
 import settings from '../settings';
 import {
-  createOctokit, GithubHelper,
+  createOctokit, getGitlabAuthor, GithubHelper,
   MilestoneImport,
   SimpleLabel,
   SimpleMilestone
@@ -568,7 +568,8 @@ async function transferReleases() {
         await githubHelper.createRelease(
           release.tag_name,
           release.name,
-          release.description
+          release.description,
+          getGitlabAuthor(release.user.name),
         );
       } catch (err) {
         console.error(

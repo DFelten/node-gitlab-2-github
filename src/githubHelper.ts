@@ -24,6 +24,10 @@ const gitHubLocation = 'https://github.com';
 
 const MyOctokit = GitHubApi.plugin(throttling);
 
+export function getGitlabAuthor(username: string) {
+  return settings.usermap ? settings.usermap[username as string] : null;
+}
+
 export function createOctokit(token: string) {
   return new MyOctokit({
     previews: settings.useIssueImportAPI ? ['golden-comet'] : [],
@@ -276,11 +280,16 @@ export class GithubHelper {
    * @param name {string} - title of the release
    * @param body {string} - description for the release
    */
-  async createRelease(tag_name: string, name: string, body: string) {
+  async createRelease(tag_name: string, name: string, body: string, gitlabAuthor: {
+    [key: string]: string;
+  },) {
     try {
       await utils.sleep(this.delayInMs);
+
+      const octokit = createOctokit(gitlabAuthor.token ?? settings.github.token);
+
       // get an array of GitHub labels for the new repo
-      let result = await this.githubApi.repos.createRelease({
+      let result = await octokit.repos.createRelease({
         owner: this.githubOwner,
         repo: this.githubRepo,
         tag_name,
@@ -514,7 +523,7 @@ export class GithubHelper {
       comments = await this.processNotesIntoComments(notes);
     }
 
-    const issue_number = await this.requestImportIssue(props, comments);
+    const issue_number = await this.requestImportIssue(props, comments, getGitlabAuthor(issue.author.username as string));
 
     if (assignees.length > 1 && issue_number) {
       if (assignees.length > 10) {
@@ -557,7 +566,7 @@ export class GithubHelper {
     for (let note of notes) {
       if (this.checkIfNoteCanBeSkipped(note.body)) continue;
 
-      let gitlabAuthor = settings.usermap ? settings.usermap[note.author.username] : null;
+      let gitlabAuthor = getGitlabAuthor(note.author.username);
 
       let userHasToken = gitlabAuthor && gitlabAuthor.token;
 
@@ -589,10 +598,15 @@ export class GithubHelper {
    */
   async requestImportIssue(
     issue: IssueImport,
-    comments: CommentImport[]
+    comments: CommentImport[],
+    gitlabIssueAuthor: {
+      [key: string]: string;
+    },
   ): Promise<number | null> {
+    const octokit = createOctokit(gitlabIssueAuthor.token ?? settings.github.token);
+
     // create the GitHub issue from the GitLab issue
-    let pending = await this.githubApi.request(
+    let pending = await octokit.request(
       `POST /repos/${settings.github.owner}/${settings.github.repo}/import/issues`,
       {
         issue: issue,
@@ -603,7 +617,7 @@ export class GithubHelper {
     let result = null;
     while (true) {
       await utils.sleep(this.delayInMs);
-      result = await this.githubApi.request(
+      result = await octokit.request(
         `GET /repos/${settings.github.owner}/${settings.github.repo}/import/issues/${pending.data.id}`
       );
       if (
@@ -942,8 +956,12 @@ export class GithubHelper {
       await utils.sleep(this.delayInMs);
 
       try {
+        let gitlabAuthor = getGitlabAuthor(mergeRequest.author.username as string);
+
+        const octokit = createOctokit(gitlabAuthor.token ?? settings.github.token)
+
         // try to create the GitHub pull request from the GitLab issue
-        const response = await this.githubApi.pulls.create(props);
+        const response = await octokit.pulls.create(props);
         return Promise.resolve(response);
       } catch (err) {
         if (err.status === 422) {
@@ -999,7 +1017,7 @@ export class GithubHelper {
         comments = await this.processNotesIntoComments(notes);
       }
 
-      return this.requestImportIssue(props, comments);
+      return this.requestImportIssue(props, comments, getGitlabAuthor(mergeRequest.author.username as string));
     } else {
       let props = {
         owner: this.githubOwner,
