@@ -3,7 +3,9 @@ export default interface Settings {
   gitlab: GitlabSettings;
   github: GithubSettings;
   usermap: {
-    [key: string]: string;
+    [key: string]: {
+      [key: string]: string;
+    };
   };
   projectmap: {
     [key: string]: string;

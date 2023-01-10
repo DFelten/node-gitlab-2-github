@@ -1,18 +1,16 @@
+import settings from '../settings';
 import {
-  GithubHelper,
+  createOctokit, GithubHelper,
   MilestoneImport,
   SimpleLabel,
-  SimpleMilestone,
+  SimpleMilestone
 } from './githubHelper';
 import { GitlabHelper, GitLabIssue, GitLabMilestone } from './gitlabHelper';
-import settings from '../settings';
 
-import { Octokit as GitHubApi } from '@octokit/rest';
-import { throttling } from '@octokit/plugin-throttling';
 import { Gitlab } from '@gitbeaker/node';
 
-import { default as readlineSync } from 'readline-sync';
 import * as fs from 'fs';
+import { default as readlineSync } from 'readline-sync';
 
 import AWS from 'aws-sdk';
 
@@ -47,43 +45,9 @@ const gitlabApi = new Gitlab({
   token: settings.gitlab.token,
 });
 
-const MyOctokit = GitHubApi.plugin(throttling);
-
-// Create a GitHub API object
-const githubApi = new MyOctokit({
-  previews: settings.useIssueImportAPI ? ['golden-comet'] : [],
-  debug: false,
-  baseUrl: settings.github.apiUrl
-    ? settings.github.apiUrl
-    : 'https://api.github.com',
-  timeout: 5000,
-  headers: {
-    'user-agent': 'node-gitlab-2-github', // GitHub is happy with a unique user agent
-    accept: 'application/vnd.github.v3+json',
-  },
-  auth: 'token ' + settings.github.token,
-  throttle: {
-    onRateLimit: async (retryAfter, options) => {
-      console.log(
-        `Request quota exhausted for request ${options.method} ${options.url}`
-      );
-      console.log(`Retrying after ${retryAfter} seconds!`);
-      return true;
-    },
-    onAbuseLimit: async (retryAfter, options) => {
-      console.log(
-        `Abuse detected for request ${options.method} ${options.url}`
-      );
-      console.log(`Retrying after ${retryAfter} seconds!`);
-      return true;
-    },
-    minimumAbuseRetryAfter: 1000,
-  },
-});
-
 const gitlabHelper = new GitlabHelper(gitlabApi, settings.gitlab);
 const githubHelper = new GithubHelper(
-  githubApi,
+  createOctokit(settings.github.token),
   settings.github,
   gitlabHelper,
   settings.useIssuesForAllMergeRequests
@@ -359,7 +323,7 @@ async function transferLabels(attachmentLabel = true, useLowerCase = true) {
       console.log('Creating: ' + label.name);
       try {
         // process asynchronous code in sequence
-        await githubHelper.createLabel(label).catch(x => {});
+        await githubHelper.createLabel(label).catch(x => { });
       } catch (err) {
         console.error('Could not create label', label.name);
         console.error(err);
@@ -548,17 +512,17 @@ async function transferMergeRequests() {
       if (githubRequest) {
         console.log(
           'Gitlab merge request already exists (as github pull request): ' +
-            mr.iid +
-            ' - ' +
-            mr.title
+          mr.iid +
+          ' - ' +
+          mr.title
         );
         githubHelper.updatePullRequestState(githubRequest, mr);
       } else {
         console.log(
           'Gitlab merge request already exists (as github issue): ' +
-            mr.iid +
-            ' - ' +
-            mr.title
+          mr.iid +
+          ' - ' +
+          mr.title
         );
       }
     }
@@ -609,18 +573,18 @@ async function transferReleases() {
       } catch (err) {
         console.error(
           'Could not create release: !' +
-            release.name +
-            ' - ' +
-            release.tag_name
+          release.name +
+          ' - ' +
+          release.tag_name
         );
         console.error(err);
       }
     } else {
       console.log(
         'Gitlab release already exists (as github release): ' +
-          githubRelease.data.name +
-          ' - ' +
-          githubRelease.data.tag_name
+        githubRelease.data.name +
+        ' - ' +
+        githubRelease.data.tag_name
       );
     }
   }

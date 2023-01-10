@@ -1,15 +1,16 @@
-import settings from '../settings';
-import { GithubSettings } from './settings';
-import * as utils from './utils';
+import { throttling } from '@octokit/plugin-throttling';
 import { Octokit as GitHubApi, RestEndpointMethodTypes } from '@octokit/rest';
 import { Endpoints } from '@octokit/types';
+import settings from '../settings';
 import {
   GitlabHelper,
   GitLabIssue,
   GitLabMergeRequest,
   GitLabNote,
-  GitLabUser,
+  GitLabUser
 } from './gitlabHelper';
+import { GithubSettings } from './settings';
+import * as utils from './utils';
 
 type IssuesListForRepoResponseData =
   Endpoints['GET /repos/{owner}/{repo}/issues']['response']['data'];
@@ -21,9 +22,48 @@ type GitHubPullRequest = PullsListResponseData[0];
 
 const gitHubLocation = 'https://github.com';
 
+const MyOctokit = GitHubApi.plugin(throttling);
+
+export function createOctokit(token: string) {
+  return new MyOctokit({
+    previews: settings.useIssueImportAPI ? ['golden-comet'] : [],
+    debug: false,
+    baseUrl: settings.github.apiUrl
+      ? settings.github.apiUrl
+      : 'https://api.github.com',
+    timeout: 5000,
+    headers: {
+      'user-agent': 'node-gitlab-2-github', // GitHub is happy with a unique user agent
+      accept: 'application/vnd.github.v3+json',
+    },
+    auth: 'token ' + token,
+    throttle: {
+      onRateLimit: async (retryAfter, options) => {
+        console.log(
+          `Request quota exhausted for request ${options.method} ${options.url}`
+        );
+        console.log(`Retrying after ${retryAfter} seconds!`);
+        return true;
+      },
+      onAbuseLimit: async (retryAfter, options) => {
+        console.log(
+          `Abuse detected for request ${options.method} ${options.url}`
+        );
+        console.log(`Retrying after ${retryAfter} seconds!`);
+        return true;
+      },
+      minimumAbuseRetryAfter: 1000,
+    },
+  });
+
+}
+
 interface CommentImport {
   created_at?: string;
   body: string;
+  gitlabAuthor: {
+    [key: string]: string;
+  };
 }
 
 interface IssueImport {
@@ -303,11 +343,14 @@ export class GithubHelper {
    ******************************************************************************
    */
   userIsCreator(author: GitLabUser) {
+    let gitlabName = author.username as string;
+
     return (
       author &&
       ((settings.usermap &&
-        settings.usermap[author.username as string] ===
-          settings.github.token_owner) ||
+        settings.usermap[gitlabName] != null &&
+        settings.usermap[gitlabName]?.name ===
+        settings.github.token_owner) ||
         author.username === settings.github.token_owner)
     );
   }
@@ -321,7 +364,7 @@ export class GithubHelper {
     let props: RestEndpointMethodTypes['repos']['update']['parameters'] = {
       owner: this.githubOwner,
       repo: this.githubRepo,
-      description: description.replace(/\s+/g, ' '),
+      description: description?.replace(/\s+/g, ' ') ?? '',
     };
     return this.githubApi.repos.update(props);
   }
@@ -366,8 +409,8 @@ export class GithubHelper {
       let username: string = assignee.username as string;
       if (username === settings.github.username) {
         assignees.push(settings.github.username);
-      } else if (settings.usermap && settings.usermap[username]) {
-        assignees.push(settings.usermap[username]);
+      } else if (settings.usermap && settings.usermap[username] && settings.usermap[username].name) {
+        assignees.push(settings.usermap[username].name);
       }
     }
     return assignees;
@@ -434,10 +477,10 @@ export class GithubHelper {
     let bodyConverted = issue.isPlaceholder
       ? issue.description ?? ''
       : await this.convertIssuesAndComments(
-          issue.description ?? '',
-          issue,
-          !this.userIsCreator(issue.author) || !issue.description
-        );
+        issue.description ?? '',
+        issue,
+        !this.userIsCreator(issue.author) || !issue.description
+      );
 
     let props: IssueImport = {
       title: issue.title ? issue.title.trim() : '',
@@ -514,27 +557,25 @@ export class GithubHelper {
     for (let note of notes) {
       if (this.checkIfNoteCanBeSkipped(note.body)) continue;
 
-      let userIsPoster =
-        (settings.usermap &&
-          settings.usermap[note.author.username] ===
-            settings.github.token_owner) ||
-        note.author.username === settings.github.token_owner;
+      let gitlabAuthor = settings.usermap ? settings.usermap[note.author.username] : null;
+
+      let userHasToken = gitlabAuthor && gitlabAuthor.token;
 
       comments.push({
         created_at: note.created_at,
         body: await this.convertIssuesAndComments(
           note.body,
           note,
-          !userIsPoster || !note.body
+          !userHasToken || !note.body
         ),
+        gitlabAuthor: gitlabAuthor,
       });
 
       nrOfMigratedNotes++;
     }
 
     console.log(
-      `\t...Done creating comments (migrated ${nrOfMigratedNotes} comments, skipped ${
-        notes.length - nrOfMigratedNotes
+      `\t...Done creating comments (migrated ${nrOfMigratedNotes} comments, skipped ${notes.length - nrOfMigratedNotes
       } comments)`
     );
     return comments;
@@ -555,7 +596,7 @@ export class GithubHelper {
       `POST /repos/${settings.github.owner}/${settings.github.repo}/import/issues`,
       {
         issue: issue,
-        comments: comments,
+        // comments: comments,
       }
     );
 
@@ -581,6 +622,20 @@ export class GithubHelper {
     }
 
     let issue_number = result.data.issue_url.split('/').splice(-1)[0];
+
+    comments.forEach(async function (comment) {
+      const octokit = createOctokit(comment.gitlabAuthor.token ?? settings.github.token);
+
+      console.log(comment.body);
+
+      await octokit.issues.createComment({
+        owner: settings.github.owner,
+        repo: settings.github.repo,
+        issue_number: issue_number,
+        body: comment.body,
+      });
+    });
+
     return issue_number;
   }
 
@@ -618,8 +673,7 @@ export class GithubHelper {
     }
 
     console.log(
-      `\t...Done creating issue comments (migrated ${nrOfMigratedNotes} comments, skipped ${
-        notes.length - nrOfMigratedNotes
+      `\t...Done creating issue comments (migrated ${nrOfMigratedNotes} comments, skipped ${notes.length - nrOfMigratedNotes
       } comments)`
     );
   }
@@ -730,13 +784,13 @@ export class GithubHelper {
     );
 
     let githubMilestone: RestEndpointMethodTypes['issues']['createMilestone']['parameters'] =
-      {
-        owner: this.githubOwner,
-        repo: this.githubRepo,
-        title: milestone.title,
-        description: bodyConverted,
-        state: milestone.state === 'active' ? 'open' : 'closed',
-      };
+    {
+      owner: this.githubOwner,
+      repo: this.githubRepo,
+      title: milestone.title,
+      description: bodyConverted,
+      state: milestone.state === 'active' ? 'open' : 'closed',
+    };
 
     if (milestone.due_date) {
       githubMilestone.due_on = milestone.due_date + 'T00:00:00Z';
@@ -1005,8 +1059,7 @@ export class GithubHelper {
     }
 
     console.log(
-      `\t...Done creating pull request comments (migrated ${nrOfMigratedNotes} pull request comments, skipped ${
-        notes.length - nrOfMigratedNotes
+      `\t...Done creating pull request comments (migrated ${nrOfMigratedNotes} pull request comments, skipped ${notes.length - nrOfMigratedNotes
       } pull request comments)`
     );
   }
@@ -1149,7 +1202,7 @@ export class GithubHelper {
       settings.projectmap !== null &&
       Object.keys(settings.projectmap).length > 0;
 
-    if (add_line) str = GithubHelper.addMigrationLine(str, item, repoLink);
+    str = GithubHelper.addMigrationLine(str, item, repoLink, add_line);
     let reString = '';
 
     //
@@ -1160,7 +1213,7 @@ export class GithubHelper {
       reString = '@' + Object.keys(settings.usermap).join('|@');
       str = str.replace(
         new RegExp(reString, 'g'),
-        match => '@' + settings.usermap[match.substring(1)]
+        match => '@' + settings.usermap[match.substring(1)].name
       );
     }
 
@@ -1207,9 +1260,8 @@ export class GithubHelper {
         }
       }
       if (milestone) {
-        const repoLink = `${this.githubUrl}/${this.githubOwner}/${
-          repo || this.githubRepo
-        }`;
+        const repoLink = `${this.githubUrl}/${this.githubOwner}/${repo || this.githubRepo
+          }`;
         return `[${milestone.title}](${repoLink}/milestone/${milestone.number})`;
       }
       console.log(
@@ -1258,7 +1310,7 @@ export class GithubHelper {
     // These regexes will capture ~this as a label. If it is among the migrated
     // labels, then it will be linked.
 
-    let labelReplacer = (label: string) => {};
+    let labelReplacer = (label: string) => { };
 
     // // Single word named label
     // if (hasProjectmap) {
@@ -1300,7 +1352,7 @@ export class GithubHelper {
    * Adds a line of text at the beginning of a comment that indicates who, when
    * and from GitLab.
    */
-  static addMigrationLine(str: string, item: any, repoLink: string): string {
+  static addMigrationLine(str: string, item: any, repoLink: string, unknownUser: boolean): string {
     if (!item || !item.author || !item.author.username || !item.created_at) {
       return str;
     }
@@ -1315,11 +1367,20 @@ export class GithubHelper {
     };
 
     const formattedDate = new Date(item.created_at).toLocaleString(
-      'en-US',
+      'de',
       dateformatOptions
     );
 
-    const attribution = `In GitLab by @${item.author.username} on ${formattedDate}`;
+    console.log(item);
+    let hasGithubAccount = settings.usermap &&
+      settings.usermap[item.author.username] &&
+      settings.usermap[item.author.username].token;
+
+    const author = hasGithubAccount ? '' : ` von @${item.author.username}`;
+    const attribution = `> Via GitLab${author} am ${formattedDate}`;
+
+    console.log(attribution);
+
     const lineRef =
       item && item.position
         ? GithubHelper.createLineRef(item.position, repoLink)

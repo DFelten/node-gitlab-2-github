@@ -24,8 +24,14 @@ export default {
     bucket: 'my-gitlab-bucket',
   },
   usermap: {
-    'username.gitlab.1': 'username.github.1',
-    'username.gitlab.2': 'username.github.2',
+    'username.gitlab.1': {
+      'name': 'username.github.1',
+      'token': 'token.github.1',
+    },
+    'username.gitlab.2': {
+      'name': 'username.github.2',
+      'token': 'token.github.2',
+    },
   },
   projectmap: {
     'gitlabgroup/projectname.1': 'GitHubOrg/projectname.1',
