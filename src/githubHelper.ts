@@ -1371,15 +1371,12 @@ export class GithubHelper {
       dateformatOptions
     );
 
-    console.log(item);
     let hasGithubAccount = settings.usermap &&
       settings.usermap[item.author.username] &&
       settings.usermap[item.author.username].token;
 
     const author = hasGithubAccount ? '' : ` von @${item.author.username}`;
     const attribution = `> Via GitLab${author} am ${formattedDate}`;
-
-    console.log(attribution);
 
     const lineRef =
       item && item.position

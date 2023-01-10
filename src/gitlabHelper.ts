@@ -1,13 +1,15 @@
-import { Gitlab } from '@gitbeaker/node';
 import {
   IssueSchema,
   MergeRequestSchema,
   MilestoneSchema,
   NoteSchema,
-  UserSchema,
+  UserSchema
 } from '@gitbeaker/core/dist/types/types';
-import { GitlabSettings } from './settings';
+import { Gitlab } from '@gitbeaker/node';
 import axios from 'axios';
+import fs from "fs";
+import * as path from 'path';
+import { GitlabSettings } from './settings';
 
 export type GitLabIssue = IssueSchema;
 export type GitLabNote = NoteSchema;
@@ -114,7 +116,7 @@ export class GitlabHelper {
   /**
    * Gets attachment using http get
    */
-  async getAttachment(relurl: string) {
+  async getAttachment(relurl: string, localPath: string, fileName: string) {
     try {
       const attachmentUrl = this.host + '/' + this.projectPath + relurl;
       const data = (
@@ -127,6 +129,13 @@ export class GitlabHelper {
           },
         })
       ).data;
+
+      const basename = path.basename(relurl);
+
+      fs.mkdirSync(localPath, { recursive: true });
+
+      fs.writeFileSync(localPath + fileName, data, { encoding: "base64" });
+
       return Buffer.from(data, 'binary');
     } catch (err) {
       console.error(`Could not download attachment #${relurl}.`);
