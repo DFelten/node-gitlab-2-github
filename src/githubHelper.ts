@@ -93,6 +93,7 @@ export interface MilestoneImport {
 export interface SimpleLabel {
   name: string;
   color: string;
+  description: string;
 }
 
 export interface SimpleMilestone {
@@ -833,6 +834,7 @@ export class GithubHelper {
       repo: this.githubRepo,
       name: label.name,
       color: label.color.substring(1), // remove leading "#" because gitlab returns it but github wants the color without it
+      description: label.description,
     };
 
     await utils.sleep(this.delayInMs);
