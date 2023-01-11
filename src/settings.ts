@@ -55,6 +55,7 @@ export interface GitlabSettings {
   projectId: number;
   listArchivedProjects?: boolean;
   sessionCookie: string;
+  projectsToCSV: boolean;
 }
 
 export interface S3Settings {

@@ -7,6 +7,7 @@ export default {
     projectId: null,
     listArchivedProjects: true,
     sessionCookie: null,
+    projectsToCSV: false,
   },
   github: {
     // baseUrl: 'https://github.mycompany.com:123/etc',

@@ -36,7 +36,6 @@ merge-requests.json
 # ignore the lock
 #package-lock.json
 
-
 # Created by https://www.gitignore.io/api/visualstudiocode
 # Edit at https://www.gitignore.io/?templates=visualstudiocode
 
@@ -138,3 +137,5 @@ modules.xml
 
 # Ignore whole .idea folder:
 .idea/
+
+project_list.csv

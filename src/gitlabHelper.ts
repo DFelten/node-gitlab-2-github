@@ -85,6 +85,39 @@ export class GitlabHelper {
   }
 
   /**
+   * Write projects to CSV.
+   */
+  async projectsToCSV() {
+    try {
+      let projects;
+      if (this.archived) {
+        projects = await this.gitlabApi.Projects.all({ membership: true });
+      } else {
+        projects = await this.gitlabApi.Projects.all({ membership: true, archived: this.archived });
+      }
+
+      const fs = require("fs");
+      const filename = "project_list.csv";
+      const writableStream = fs.createWriteStream(filename);
+
+      writableStream.write(`id;name;default_branch;path\n`);
+      for (let project of projects) {
+        writableStream.write(`${project.id.toString()};${project.name};${project.default_branch};${project.path_with_namespace}\n`);
+      }
+
+      writableStream.end;
+
+      console.log(
+        'Projects saved as CSV.'
+      );
+      console.log('\n\n');
+    } catch (err) {
+      console.error('An Error occured while writing all GitLab projects to CSV:');
+      console.error(err);
+    }
+  }
+
+  /**
    * Stores project path in a field
    */
   async registerProjectPath(project_d: number) {

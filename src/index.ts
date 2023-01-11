@@ -55,7 +55,9 @@ const githubHelper = new GithubHelper(
 
 // If no project id is given in settings.js, just return
 // all of the projects that this user is associated with.
-if (!settings.gitlab.projectId) {
+if (settings.gitlab.projectsToCSV) {
+  gitlabHelper.projectsToCSV();
+} else if (!settings.gitlab.projectId) {
   gitlabHelper.listProjects();
 } else {
   // user has chosen a project
