@@ -100,9 +100,12 @@ export class GitlabHelper {
       const filename = "project_list.csv";
       const writableStream = fs.createWriteStream(filename);
 
-      writableStream.write(`id;name;default_branch;path\n`);
+      writableStream.write(`id;name;slug;new_slug;default_branch;path\n`);
       for (let project of projects) {
-        writableStream.write(`${project.id.toString()};${project.name};${project.default_branch};${project.path_with_namespace}\n`);
+        let splitted = project.path_with_namespace.split("/");
+        let slug = splitted[splitted.length - 1];
+
+        writableStream.write(`${project.id.toString()};${project.name};${slug};;${project.default_branch};${project.path_with_namespace}\n`);
       }
 
       writableStream.end;
