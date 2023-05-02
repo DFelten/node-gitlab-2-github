@@ -208,7 +208,12 @@ async function transferDescription() {
 
   let project = await gitlabApi.Projects.show(settings.gitlab.projectId);
 
-  await githubHelper.updateRepositoryDescription(project.description);
+  if (project.description) {
+    await githubHelper.updateRepositoryDescription(project.description);
+    console.log('Done.');
+  } else {
+    console.log('Description is empty, nothing to transfer.')
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -315,6 +320,7 @@ async function transferLabels(attachmentLabel = true, useLowerCase = true) {
       name: 'has attachment',
       color: '#fbca04',
       description: 'Attachment was not transfered from GitLab',
+      description: 'Attachment was not transfered from GitLab',
     };
     labels.push(hasAttachmentLabel);
   }
@@ -322,6 +328,7 @@ async function transferLabels(attachmentLabel = true, useLowerCase = true) {
   const gitlabMergeRequestLabel = {
     name: 'gitlab merge request',
     color: '#b36b00',
+    description: '',
     description: '',
   };
   labels.push(gitlabMergeRequestLabel);
@@ -522,8 +529,12 @@ async function transferMergeRequests() {
       i => i.title.trim() === mr.title.trim()
     );
     let githubIssue = githubIssues.find(
-      // allow for issues titled "Original Issue Name [merged]"
-      i => i.title.trim().includes(mr.title.trim())
+      // allow for issues titled "Original Issue Name - [merged|closed]"
+      i => {
+        // regex needs escaping in case merge request title contains special characters
+        const regex = new RegExp(escapeRegExp(mr.title.trim()) + ' - \\[(merged|closed)\\]');
+        return regex.test(i.title.trim());
+      }
     );
     if (!githubRequest && !githubIssue) {
       if (settings.skipMergeRequestStates.includes(mr.state)) {
@@ -677,4 +688,8 @@ function inform(msg: string) {
   console.log('==================================');
   console.log(msg);
   console.log('==================================');
+}
+
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
 }

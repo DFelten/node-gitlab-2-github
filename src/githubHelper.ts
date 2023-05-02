@@ -3,11 +3,11 @@ import { Octokit as GitHubApi, RestEndpointMethodTypes } from '@octokit/rest';
 import { Endpoints } from '@octokit/types';
 import settings from '../settings';
 import {
-  GitlabHelper,
   GitLabIssue,
   GitLabMergeRequest,
   GitLabNote,
-  GitLabUser
+  GitLabUser,
+  GitlabHelper
 } from './gitlabHelper';
 import { GithubSettings } from './settings';
 import * as utils from './utils';
@@ -93,6 +93,7 @@ export interface MilestoneImport {
 export interface SimpleLabel {
   name: string;
   color: string;
+  description: string;
   description: string;
 }
 
@@ -203,6 +204,7 @@ export class GithubHelper {
         owner: this.githubOwner,
         repo: this.githubRepo,
         state: 'all',
+        labels: 'gitlab merge request',
         per_page: perPage,
         page: page,
       });
@@ -374,7 +376,7 @@ export class GithubHelper {
     let props: RestEndpointMethodTypes['repos']['update']['parameters'] = {
       owner: this.githubOwner,
       repo: this.githubRepo,
-      description: description?.replace(/\s+/g, ' ') ?? '',
+      description: description?.replace(/\s+/g, ' ') || '',
     };
     return this.githubApi.repos.update(props);
   }
