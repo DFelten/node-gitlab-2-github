@@ -94,7 +94,6 @@ export interface SimpleLabel {
   name: string;
   color: string;
   description: string;
-  description: string;
 }
 
 export interface SimpleMilestone {
