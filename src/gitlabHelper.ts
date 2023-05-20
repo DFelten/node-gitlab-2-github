@@ -1,20 +1,15 @@
-import {
-  IssueSchema,
-  MergeRequestSchema,
-  MilestoneSchema,
-  NoteSchema,
-  UserSchema
-} from '@gitbeaker/core/dist/types/types';
-import { Gitlab } from '@gitbeaker/node';
+
+
+import { Gitlab, IssueSchema, MergeRequestSchema, UserSchema } from '@gitbeaker/core';
 import axios from 'axios';
 import fs from "fs";
 import * as path from 'path';
 import { GitlabSettings } from './settings';
 
 export type GitLabIssue = IssueSchema;
-export type GitLabNote = NoteSchema;
+// export type GitLabNote = NoteSchema;
 export type GitLabUser = Omit<UserSchema, 'created_at'>;
-export type GitLabMilestone = MilestoneSchema;
+// export type GitLabMilestone = MilestoneSchema;
 export type GitLabMergeRequest = MergeRequestSchema;
 
 export class GitlabHelper {
@@ -56,9 +51,11 @@ export class GitlabHelper {
     try {
       let projects;
       if (this.archived) {
-        projects = await this.gitlabApi.Projects.all({ membership: true });
+        // projects = await this.gitlabApi.Projects.all({ membership: true });
+        projects = await this.gitlabApi.Projects.all();
       } else {
-        projects = await this.gitlabApi.Projects.all({ membership: true, archived: this.archived });
+        // projects = await this.gitlabApi.Projects.all({ membership: true, archived: this.archived });
+        projects = await this.gitlabApi.Projects.all();
       }
 
       // print each project with info
@@ -91,9 +88,11 @@ export class GitlabHelper {
     try {
       let projects;
       if (this.archived) {
-        projects = await this.gitlabApi.Projects.all({ membership: true });
+        // projects = await this.gitlabApi.Projects.all({ membership: true });
+        projects = await this.gitlabApi.Projects.all();
       } else {
-        projects = await this.gitlabApi.Projects.all({ membership: true, archived: this.archived });
+        // projects = await this.gitlabApi.Projects.all({ membership: true, archived: this.archived });
+        projects = await this.gitlabApi.Projects.all();
       }
 
       const fs = require("fs");
@@ -126,7 +125,8 @@ export class GitlabHelper {
   async registerProjectPath(project_d: number) {
     try {
       const project = await this.gitlabApi.Projects.show(project_d);
-      this.projectPath = project['path_with_namespace'];
+      this.projectPath = project['path_with_namespace'] as string;
+      // this.projectPath = project['path_with_namespace'];
     } catch (err) {
       console.error('An Error occured while fetching all GitLab projects:');
       console.error(err);
@@ -136,13 +136,16 @@ export class GitlabHelper {
   /**
    * Gets all notes for a given issue.
    */
-  async getIssueNotes(issueIid: number): Promise<GitLabNote[]> {
+  async getIssueNotes(issueIid: number) {
     try {
-      return await this.gitlabApi.IssueNotes.all(
+      const test = await this.gitlabApi.IssueNotes.all(
         this.gitlabProjectId,
         issueIid,
         {}
       );
+
+      console.log(test);
+
     } catch (err) {
       console.error(`Could not fetch notes for GitLab issue #${issueIid}.`);
       return [];
@@ -194,7 +197,8 @@ export class GitlabHelper {
   /**
    * Gets all notes for a given merge request.
    */
-  async getAllMergeRequestNotes(pullRequestIid: number): Promise<GitLabNote[]> {
+  // async getAllMergeRequestNotes(pullRequestIid: number): Promise<GitlabAPIResponse<IssueNoteSchema[], boolean, boolean, PaginationTypes>> {
+  async getAllMergeRequestNotes(pullRequestIid: number) {
     try {
       return this.gitlabApi.MergeRequestNotes.all(
         this.gitlabProjectId,

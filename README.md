@@ -42,7 +42,7 @@ The user must be a member of the project you want to copy. This user must be the
 
 ### Docker
 
-If you don't have Node.js installed in your local environment and don't want to install it you can use the Dockerized approach. 
+If you don't have Node.js installed in your local environment and don't want to install it you can use the Dockerized approach.
 
 1. Make sure that you have [Docker](https://docs.docker.com/engine/install/) installed in your computer. You can test running `docker version` in the terminal.
 1. `cp sample_settings.ts settings.ts`
@@ -223,8 +223,8 @@ This is an array (empty per default) that may contain string values. Any note/co
 
 Suggested values:
 
-- `time spent`, since those kind of terms can be used in GitLab to track time, they are rather meaningless in Github though
-- action entries, such as `changed the description`, `added 1 commit`, `mentioned in merge request`, etc as they are interpreted as comments
+* `time spent`, since those kind of terms can be used in GitLab to track time, they are rather meaningless in Github though
+* action entries, such as `changed the description`, `added 1 commit`, `mentioned in merge request`, etc as they are interpreted as comments
 
 ### mergeRequests
 

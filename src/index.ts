@@ -5,9 +5,9 @@ import {
   SimpleLabel,
   SimpleMilestone
 } from './githubHelper';
-import { GitlabHelper, GitLabIssue, GitLabMilestone } from './gitlabHelper';
+import { GitlabHelper, GitLabIssue } from './gitlabHelper';
 
-import { Gitlab } from '@gitbeaker/node';
+import { Gitlab } from '@gitbeaker/rest';
 
 import * as fs from 'fs';
 import { default as readlineSync } from 'readline-sync';
@@ -226,7 +226,7 @@ async function transferMilestones(usePlaceholders: boolean) {
 
   // Get a list of all milestones associated with this project
   // FIXME: don't use type join but ensure everything is milestoneImport
-  let milestones: (GitLabMilestone | MilestoneImport)[] =
+  let milestones: (MilestoneImport)[] =
     await gitlabApi.ProjectMilestones.all(settings.gitlab.projectId);
 
   // sort milestones in ascending order of when they were created (by id)
@@ -307,7 +307,7 @@ async function transferLabels(attachmentLabel = true, useLowerCase = true) {
   const invalidUnicode = /[\u{10000}-\u{10FFFF}]|(?![*#0-9]+)[\p{Emoji}\p{Emoji_Modifier}\p{Emoji_Component}\p{Emoji_Modifier_Base}\p{Emoji_Presentation}]/gu;
 
   // Get a list of all labels associated with this project
-  let labels: SimpleLabel[] = await gitlabApi.Labels.all(
+  let labels: SimpleLabel[] = await gitlabApi.ProjectLabels.all( // TODO GROUP LABELS?
     settings.gitlab.projectId
   );
 
@@ -320,7 +320,6 @@ async function transferLabels(attachmentLabel = true, useLowerCase = true) {
       name: 'has attachment',
       color: '#fbca04',
       description: 'Attachment was not transfered from GitLab',
-      description: 'Attachment was not transfered from GitLab',
     };
     labels.push(hasAttachmentLabel);
   }
@@ -328,7 +327,6 @@ async function transferLabels(attachmentLabel = true, useLowerCase = true) {
   const gitlabMergeRequestLabel = {
     name: 'gitlab merge request',
     color: '#b36b00',
-    description: '',
     description: '',
   };
   labels.push(gitlabMergeRequestLabel);
@@ -585,7 +583,8 @@ async function transferReleases() {
   inform('Transferring Releases');
 
   // Get a list of all releases associated with this project
-  let releases = await gitlabApi.Releases.all(settings.gitlab.projectId);
+  let releases = await gitlabApi.ProjectReleases.all(settings.gitlab.projectId);
+  // let releases = await gitlabApi.Releases.all(settings.gitlab.projectId);
 
   // Sort releases in ascending order of their release date
   releases = releases.sort((a, b) => {
@@ -614,7 +613,7 @@ async function transferReleases() {
           release.tag_name,
           release.name,
           release.description,
-          getGitlabAuthor(release.user.name),
+          getGitlabAuthor(release.user.name as string),
         );
       } catch (err) {
         console.error(

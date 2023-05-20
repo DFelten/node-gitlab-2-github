@@ -5,7 +5,6 @@ import settings from '../settings';
 import {
   GitLabIssue,
   GitLabMergeRequest,
-  GitLabNote,
   GitLabUser,
   GitlabHelper
 } from './gitlabHelper';
@@ -93,7 +92,6 @@ export interface MilestoneImport {
 export interface SimpleLabel {
   name: string;
   color: string;
-  description: string;
   description: string;
 }
 
@@ -553,7 +551,7 @@ export class GithubHelper {
    * @returns Comments ready for requestImportIssue()
    */
   async processNotesIntoComments(
-    notes: GitLabNote[]
+    notes
   ): Promise<CommentImport[]> {
     if (!notes || !notes.length) {
       console.log(`\t...no comments available, nothing to migrate.`);
@@ -569,7 +567,7 @@ export class GithubHelper {
     for (let note of notes) {
       if (this.checkIfNoteCanBeSkipped(note.body)) continue;
 
-      let gitlabAuthor = getGitlabAuthor(note.author.username);
+      let gitlabAuthor = getGitlabAuthor(note.author.username as string); // TODO KP
 
       let userHasToken = gitlabAuthor && gitlabAuthor.token;
 
@@ -641,6 +639,8 @@ export class GithubHelper {
     let issue_number = result.data.issue_url.split('/').splice(-1)[0];
 
     comments.forEach(async function (comment) {
+      console.log('\TOKEN:');
+      console.log(comment.gitlabAuthor.token);
       const octokit = createOctokit(comment.gitlabAuthor.token ?? settings.github.token);
 
       console.log(comment.body);
@@ -736,7 +736,7 @@ export class GithubHelper {
    * Return false when it got skipped, otherwise true.
    */
   async processNote(
-    note: GitLabNote,
+    note,
     githubIssue: Pick<GitHubIssue | GitHubPullRequest, 'number'>
   ) {
     if (this.checkIfNoteCanBeSkipped(note.body)) return false;
@@ -1207,7 +1207,8 @@ export class GithubHelper {
    */
   async convertIssuesAndComments(
     str: string,
-    item: GitLabIssue | GitLabMergeRequest | GitLabNote | MilestoneImport,
+    // item: GitLabIssue | GitLabMergeRequest | GitLabNote | MilestoneImport,
+    item,
     add_line: boolean = true
   ): Promise<string> {
     // A note on implementation:
