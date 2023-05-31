@@ -9,7 +9,7 @@ import { Gitlab } from '@gitbeaker/node';
 import axios from 'axios';
 import fs from "fs";
 import * as path from 'path';
-import { GitlabSettings } from './settings';
+import { GitlabSettings, ProjectSettings } from './settings';
 
 export type GitLabIssue = IssueSchema;
 export type GitLabNote = NoteSchema;
@@ -34,12 +34,13 @@ export class GitlabHelper {
 
   constructor(
     gitlabApi: InstanceType<typeof Gitlab>,
-    gitlabSettings: GitlabSettings
+    gitlabSettings: GitlabSettings,
+    projectSettings: ProjectSettings
   ) {
     this.gitlabApi = gitlabApi;
     this.gitlabUrl = gitlabSettings.url;
     this.gitlabToken = gitlabSettings.token;
-    this.gitlabProjectId = gitlabSettings.projectId;
+    this.gitlabProjectId = projectSettings.gitLabId;
     this.host = gitlabSettings.url ? gitlabSettings.url : 'https://gitlab.com';
     this.host = this.host.endsWith('/')
       ? this.host.substring(0, this.host.length - 1)
@@ -91,9 +92,9 @@ export class GitlabHelper {
     try {
       let projects;
       if (this.archived) {
-        projects = await this.gitlabApi.Projects.all({ membership: true });
+        projects = await this.gitlabApi.Projects.all({ membership: false });
       } else {
-        projects = await this.gitlabApi.Projects.all({ membership: true, archived: this.archived });
+        projects = await this.gitlabApi.Projects.all({ membership: false, archived: this.archived });
       }
 
       const fs = require("fs");

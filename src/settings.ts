@@ -1,12 +1,12 @@
 export default interface Settings {
+  allProjects: boolean;
+  archiveProjects: boolean;
+  createRepo: boolean;
+  migrateRepo: boolean;
+  migrateComments: boolean;
   debug: boolean;
   gitlab: GitlabSettings;
   github: GithubSettings;
-  usermap: {
-    [key: string]: {
-      [key: string]: string;
-    };
-  };
   projectmap: {
     [key: string]: string;
   };
@@ -35,6 +35,11 @@ export default interface Settings {
     log: boolean;
   };
   s3?: S3Settings;
+  usermap: {
+    [key: string]: {
+      [key: string]: string;
+    };
+  };
 }
 
 export interface GithubSettings {
@@ -44,7 +49,7 @@ export interface GithubSettings {
   ownerIsOrg?: boolean;
   token: string;
   token_owner: string;
-  repo: string;
+  // repo: string;
   timeout?: number;
   username?: string; // when is this set???
   recreateRepo?: boolean;
@@ -53,14 +58,34 @@ export interface GithubSettings {
 export interface GitlabSettings {
   url?: string;
   token: string;
-  projectId: number;
   listArchivedProjects?: boolean;
   sessionCookie: string;
   projectsToCSV: boolean;
+  // projectId(): number;
+  // projectName(): string;
+  // projectSlug(): string;
+  // projectArchived(): boolean;
+  // projectDefaultBranch(): string;
+  // projectPath(): string;
+  // projectTeam(): string;
+  // projectTopics(): string[];
 }
 
 export interface S3Settings {
   accessKeyId: string;
   secretAccessKey: string;
   bucket: string;
+}
+
+export interface ProjectSettings {
+  gitLabId: number;
+  gitLabName: string;
+  gitLabSlug: string;
+  gitLabPath: string;
+  gitHubPath: string,
+  gitHubSlug: string,
+  defaultBranch: string;
+  archived: boolean;
+  topics: string[];
+  team: string;
 }

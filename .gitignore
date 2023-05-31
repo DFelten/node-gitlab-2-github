@@ -138,4 +138,5 @@ modules.xml
 # Ignore whole .idea folder:
 .idea/
 
-project_list.csv
+repos/
+project*.csv

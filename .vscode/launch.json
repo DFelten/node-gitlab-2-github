@@ -8,7 +8,9 @@
       "type": "node",
       "request": "launch",
       "name": "Node: Launch",
-      "env": { "TS_NODE_PROJECT": "tsconfig.dev.json" },
+      "env": {
+        "TS_NODE_PROJECT": "tsconfig.dev.json"
+      },
       "runtimeExecutable": "node",
       "args": [
         "--inspect",
@@ -16,9 +18,9 @@
         "ts-node/register/type-check",
         "-r",
         "tsconfig-paths/register",
-        "src/index.ts"
+        "src/index.ts",
+        "project=492"
       ],
-      "protocol": "inspector",
       "sourceMaps": true,
       "console": "integratedTerminal"
     }

@@ -1,5 +1,6 @@
+import { exec } from 'child_process';
 import * as path from 'path';
-import settings from '../settings';
+import { projectSettings } from '../settings';
 import { GitlabHelper } from './gitlabHelper';
 import { S3Settings } from './settings';
 
@@ -12,7 +13,7 @@ export const migrateAttachments = async (
   body: string,
   githubRepoId: number | undefined,
   s3: S3Settings | undefined,
-  gitlabHelper: GitlabHelper
+  gitlabHelper: GitlabHelper,
 ) => {
   const regexp = /(!?)\[([^\]]+)\]\((\/uploads[^)]+)\)/g;
 
@@ -29,9 +30,9 @@ export const migrateAttachments = async (
     const url = match[3];
 
     const basename = path.basename(url);
-    await gitlabHelper.getAttachment(url, `../gitlab-images/images/${settings.gitlab.projectId}/`, basename);
+    await gitlabHelper.getAttachment(url, `../gitlab-images/images/${projectSettings.gitLabId}/`, basename);
 
-    const attachmentUrl = 'https://github.com/trimexa/gitlab-images/blob/main/images/' + `${settings.gitlab.projectId}/` + basename;
+    const attachmentUrl = 'https://github.com/trimexa/gitlab-images/blob/main/images/' + `${projectSettings.gitLabId}/` + basename;
     offsetToAttachment[
       match.index as number
     ] = `[${name}](${attachmentUrl})`;
@@ -42,3 +43,23 @@ export const migrateAttachments = async (
     ({ }, { }, { }, { }, offset, { }) => offsetToAttachment[offset]
   );
 };
+
+export async function shellStuff(command: string, next?: Function, ignoreError = false) {
+  console.log(command);
+
+  exec(command, (error, stdout, stderr) => {
+    if (error) {
+      console.log(`error: ${error.message}`);
+
+      if (!ignoreError) {
+        return;
+      }
+    }
+    if (stderr) {
+      console.log(`stderr: ${stderr}`);
+    }
+    console.log(`stdout: ${stdout}`);
+
+    next?.();
+  });
+}

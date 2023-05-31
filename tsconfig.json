@@ -1,11 +1,16 @@
 {
   "compilerOptions": {
     "allowJs": false,
-    "lib": ["es2020.string"],
+    "lib": [
+      "es2020.string"
+    ],
     "target": "es5",
     "downlevelIteration": true,
     //"strict": true,
     "esModuleInterop": true
   },
-  "include": ["./src/**/*", "settings.ts"]
+  "include": [
+    "./src/**/*",
+    "settings.ts"
+  ]
 }
