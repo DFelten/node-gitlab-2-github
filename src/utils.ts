@@ -1,8 +1,7 @@
 import { exec } from 'child_process';
 import * as path from 'path';
-import { projectSettings } from '../settings';
 import { GitlabHelper } from './gitlabHelper';
-import { S3Settings } from './settings';
+import { ProjectSettings, S3Settings } from './settings';
 
 export const sleep = (milliseconds: number) => {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -14,6 +13,7 @@ export const migrateAttachments = async (
   githubRepoId: number | undefined,
   s3: S3Settings | undefined,
   gitlabHelper: GitlabHelper,
+  projectSettings: ProjectSettings,
 ) => {
   const regexp = /(!?)\[([^\]]+)\]\((\/uploads[^)]+)\)/g;
 
@@ -57,6 +57,10 @@ export async function shellStuff(command: string, next?: Function, ignoreError =
     }
     if (stderr) {
       console.log(`stderr: ${stderr}`);
+
+      if (stderr.includes('You have created too many repositories, too quickly.')) {
+        console.log(`ZU VIELE VERSUCHE!`);
+      }
     }
     console.log(`stdout: ${stdout}`);
 

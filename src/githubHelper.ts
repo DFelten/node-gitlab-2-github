@@ -1,7 +1,7 @@
 import { throttling } from '@octokit/plugin-throttling';
 import { Octokit as GitHubApi, RestEndpointMethodTypes } from '@octokit/rest';
 import { Endpoints } from '@octokit/types';
-import settings, { projectSettings, projectSettingsList } from '../settings';
+import settings, { projectSettingsList } from '../settings';
 import {
   GitLabIssue,
   GitLabMergeRequest,
@@ -9,7 +9,7 @@ import {
   GitLabUser,
   GitlabHelper
 } from './gitlabHelper';
-import { GithubSettings } from './settings';
+import { GithubSettings, ProjectSettings } from './settings';
 import * as utils from './utils';
 import { shellStuff } from './utils';
 
@@ -68,14 +68,14 @@ export function createOctokit(token?: string) {
     throttle: {
       onRateLimit: async (retryAfter, options) => {
         console.log(
-          `Request quota exhausted for request ${options.method} ${options.url}`
+          `Request quota exhausted for request ${options.method} ${options.url} (${new Date()})`
         );
         console.log(`Retrying after ${retryAfter} seconds!`);
         return true;
       },
       onAbuseLimit: async (retryAfter, options) => {
         console.log(
-          `Abuse detected for request ${options.method} ${options.url}`
+          `Abuse detected for request ${options.method} ${options.url} (${new Date()})`
         );
         console.log(`Retrying after ${retryAfter} seconds!`);
         return true;
@@ -139,17 +139,20 @@ export class GithubHelper {
   delayInMs: number;
   useIssuesForAllMergeRequests: boolean;
   milestoneMap?: Map<number, SimpleMilestone>;
+  projectSettings: ProjectSettings;
 
   constructor(
     githubApi: GitHubApi,
     githubSettings: GithubSettings,
     gitlabHelper: GitlabHelper,
     useIssuesForAllMergeRequests: boolean,
+    projectSettings: ProjectSettings,
   ) {
     this.githubApi = githubApi;
     this.githubUrl = githubSettings.baseUrl
       ? githubSettings.baseUrl
       : gitHubLocation;
+    this.projectSettings = projectSettings;
     this.githubOwner = githubSettings.owner;
     this.githubOwnerIsOrg = githubSettings.ownerIsOrg ?? false;
     this.githubToken = githubSettings.token;
@@ -498,7 +501,9 @@ export class GithubHelper {
     //   labels.push('has attachment');
     // }
 
-    return labels;
+    var labelsSet = [...new Set(labels)];
+
+    return [...labelsSet];
   }
 
   /**
@@ -576,7 +581,7 @@ export class GithubHelper {
     }
 
     if (issue.isPlaceholder) {
-      await shellStuff(`gh issue delete ${issue_number} -R ${projectSettings.gitHubPath}`).then(() => {
+      await shellStuff(`gh issue delete ${issue_number} -R ${this.projectSettings.gitHubPath}`).then(() => {
         console.log(
           `Placeholder issue #${issue_number} deleted`
         );
@@ -648,7 +653,7 @@ export class GithubHelper {
 
     // create the GitHub issue from the GitLab issue
     let pending = await octokit.request(
-      `POST /repos/${settings.github.owner}/${projectSettings.gitHubSlug}/import/issues`,
+      `POST /repos/${settings.github.owner}/${this.projectSettings.gitHubSlug}/import/issues`,
       {
         issue: issue,
         // comments: comments,
@@ -659,7 +664,7 @@ export class GithubHelper {
     while (true) {
       await utils.sleep(this.delayInMs);
       result = await octokit.request(
-        `GET /repos/${settings.github.owner}/${projectSettings.gitHubSlug}/import/issues/${pending.data.id}`
+        `GET /repos/${settings.github.owner}/${this.projectSettings.gitHubSlug}/import/issues/${pending.data.id}`
       );
       if (
         result.data.status === 'imported' ||
@@ -673,15 +678,30 @@ export class GithubHelper {
       console.log(result);
       console.log('\tERRORS:');
       console.log(result.data.errors);
-      return null;
+
+      let pending = await octokit.request(
+        `POST /repos/${settings.github.owner}/${this.projectSettings.gitHubSlug}/import/issues`,
+        {
+          issue: createReplacementIssue(issue),
+        }
+      );
+      await utils.sleep(this.delayInMs);
+      result = await octokit.request(
+        `GET /repos/${settings.github.owner}/${this.projectSettings.gitHubSlug}/import/issues/${pending.data.id}`
+      );
+
+      if (result.data.status === 'failed') {
+        console.log('\tFAILED AGAIN');
+
+        return null;
+      }
     }
 
     let issue_number = result.data.issue_url.split('/').splice(-1)[0];
+    var projectSettings = this.projectSettings;
 
-    comments.forEach(async function (comment) {
-
+    for (let comment of comments) {
       const octokit = createOctokit(comment?.gitlabAuthor?.token);
-
 
       console.log(comment.body);
 
@@ -691,19 +711,20 @@ export class GithubHelper {
         issue_number: issue_number,
         body: comment.body,
       });
-    });
+    }
 
     return issue_number;
   }
 
   async createCommentsForIssue(issue: GitLabIssue) {
+    console.log(`createCommentsForIssue ${issue.title} (Id: ${issue.id}, Iid: ${issue.iid}`)
+
     let notes = await this.gitlabHelper.getIssueNotes(issue.iid);
     let comments: CommentImport[] = await this.processNotesIntoComments(notes);
+    var projectSettings = this.projectSettings;
 
-    comments.forEach(async function (comment) {
-
+    for (let comment of comments) {
       const octokit = createOctokit(comment?.gitlabAuthor?.token);
-
 
       console.log(comment.body);
 
@@ -713,7 +734,7 @@ export class GithubHelper {
         issue_number: issue.iid,
         body: comment.body,
       });
-    });
+    }
 
     return issue.iid;
   }
@@ -781,6 +802,7 @@ export class GithubHelper {
       /^removed ~.* label/i.test(noteBody) ||
       /^made the issue confidential/i.test(noteBody) ||
       /^closed$/i.test(noteBody) ||
+      /^reopened$/i.test(noteBody) ||
       /^locked this issue$/i.test(noteBody) ||
       /^mentioned in issue #\d+.*/i.test(noteBody) ||
       // /^marked this issue as related to #\d+/i.test(noteBody) ||
@@ -788,6 +810,10 @@ export class GithubHelper {
       /^changed the description.*/i.test(noteBody) ||
       /^changed title from.*to.*/i.test(noteBody) ||
       /^changed this line in.*/i.test(noteBody) ||
+      /^changed time estimate.*/i.test(noteBody) ||
+      /^unassigned .*/i.test(noteBody) ||
+      /^mentioned in commit .*/i.test(noteBody) ||
+      /^resolved all threads$/i.test(noteBody) ||
       /^ resolved all threads$/i.test(noteBody);
 
     const matchingComment = settings.skipMatchingComments.reduce(
@@ -1014,7 +1040,7 @@ export class GithubHelper {
 
     if (settings.debug) return Promise.resolve({ data: mergeRequest });
 
-    if (canCreate) {/// TODO HIER NOCH FALSCHER ACCOUNT
+    if (canCreate) {
       let bodyConverted = await this.convertIssuesAndComments(
         mergeRequest.description,
         mergeRequest,
@@ -1068,49 +1094,51 @@ export class GithubHelper {
       // !this.userIsCreator(mergeRequest.author) || !settings.useIssueImportAPI
     );
 
-    if (settings.useIssueImportAPI) {
-      let assignees = this.convertAssignees(mergeRequest);
+    if (settings.usePlaceholderIssuesForMissingMergeRequestBranches) {
+      if (settings.useIssueImportAPI) {
+        let assignees = this.convertAssignees(mergeRequest);
 
-      let props: IssueImport = {
-        title: mergeRequest.title.trim() + ' - [' + mergeRequest.state + ']',
-        body: bodyConverted,
-        assignee: assignees.length > 0 ? assignees[0] : undefined,
-        created_at: mergeRequest.created_at,
-        updated_at: mergeRequest.updated_at,
-        closed:
-          mergeRequest.state === 'merged' || mergeRequest.state === 'closed',
-        labels: ['gitlab merge request'],
-      };
+        let props: IssueImport = {
+          title: mergeRequest.title.trim() + ' - [' + mergeRequest.state + ']',
+          body: bodyConverted,
+          assignee: assignees.length > 0 ? assignees[0] : undefined,
+          created_at: mergeRequest.created_at,
+          updated_at: mergeRequest.updated_at,
+          closed:
+            mergeRequest.state === 'merged' || mergeRequest.state === 'closed',
+          labels: ['gitlab merge request'],
+        };
 
-      console.log('\tMigrating pull request comments...');
-      let comments: CommentImport[] = [];
+        console.log('\tMigrating pull request comments...');
+        let comments: CommentImport[] = [];
 
-      if (!mergeRequest.iid) {
-        console.log(
-          '\t...this is a placeholder for a deleted GitLab merge request, no comments are created.'
-        );
+        if (!mergeRequest.iid) {
+          console.log(
+            '\t...this is a placeholder for a deleted GitLab merge request, no comments are created.'
+          );
+        } else {
+          let notes = await this.gitlabHelper.getAllMergeRequestNotes(
+            mergeRequest.iid
+          );
+          comments = await this.processNotesIntoComments(notes);
+        }
+
+        return this.requestImportIssue(props, comments, getGitlabAuthor(mergeRequest?.author?.username as string));
       } else {
-        let notes = await this.gitlabHelper.getAllMergeRequestNotes(
-          mergeRequest.iid
-        );
-        comments = await this.processNotesIntoComments(notes);
+        let props = {
+          owner: this.githubOwner,
+          repo: this.githubRepo,
+          assignees: this.convertAssignees(mergeRequest),
+          title: mergeRequest.title.trim() + ' - [' + mergeRequest.state + ']',
+          body: bodyConverted,
+        };
+
+        // Add a label to indicate the issue is a merge request
+        if (!mergeRequest.labels) mergeRequest.labels = [];
+        mergeRequest.labels.push('gitlab merge request');
+
+        return this.githubApi.issues.create(props);
       }
-
-      return this.requestImportIssue(props, comments, getGitlabAuthor(mergeRequest?.author?.username as string));
-    } else {
-      let props = {
-        owner: this.githubOwner,
-        repo: this.githubRepo,
-        assignees: this.convertAssignees(mergeRequest),
-        title: mergeRequest.title.trim() + ' - [' + mergeRequest.state + ']',
-        body: bodyConverted,
-      };
-
-      // Add a label to indicate the issue is a merge request
-      if (!mergeRequest.labels) mergeRequest.labels = [];
-      mergeRequest.labels.push('gitlab merge request');
-
-      return this.githubApi.issues.create(props);
     }
   }
 
@@ -1265,10 +1293,21 @@ export class GithubHelper {
   async addTopics(topics: string[]) {
     await this.githubApi.repos.replaceAllTopics({
       owner: this.githubOwner,
-      repo: projectSettings.gitHubSlug,
+      repo: this.projectSettings.gitHubSlug,
       names: topics,
     });
     console.log('Topics added ' + topics);
+  }
+
+  async archiveRepo() {
+    console.log(`Archiving repo ${this.githubRepo}`);
+
+    let props: RestEndpointMethodTypes['repos']['update']['parameters'] = {
+      owner: this.githubOwner,
+      repo: this.githubRepo,
+      archived: false,
+    };
+    return this.githubApi.repos.update(props);
   }
 
   async lockIssueForComments(issue_number: number) {
@@ -1329,9 +1368,9 @@ export class GithubHelper {
       settings.projectmap !== null &&
       Object.keys(settings.projectmap).length > 0;
 
-    if (str === '' || add_line) {
-      str = GithubHelper.addMigrationLine(str, item, repoLink);
-    }
+
+    str = GithubHelper.addMigrationLine(str, item, repoLink, add_line);
+
     let reString = '';
 
     //
@@ -1339,10 +1378,12 @@ export class GithubHelper {
     //
 
     if (hasUsermap) {
-      reString = '@' + Object.keys(settings.usermap).join('|@');
+      var userMap = settings.usermap;
+
+      reString = '@' + Object.keys(userMap).join('|@');
       str = str.replace(
         new RegExp(reString, 'g'),
-        match => '@' + settings.usermap[match.substring(1)].name
+        match => (settings.usermap[match.substring(1)] !== undefined ? ('@' + settings.usermap[match.substring(1)]?.name) : match)
       );
     }
 
@@ -1355,28 +1396,28 @@ export class GithubHelper {
     };
 
     if (hasProjectmap) {
-      projectSettingsList.forEach(setting => {
+      for (let projectSettings of projectSettingsList) {
         /// Replace gitlab issue with github issue
-        const issueRegex = new RegExp('(' + setting.gitLabPath + ')#(\\d+)', 'g');
+        const issueRegex = new RegExp('(' + projectSettings.gitLabPath + ')#(\\d+)', 'g');
 
         str = str.replace(
           issueRegex,
-          (_, p1, p2) => setting.gitHubPath + issueReplacer(p2)
+          (_, p1, p2) => projectSettings.gitHubPath + issueReplacer(p2)
         );
 
         /// Replace gitlab issue url with github url
-        const urlIssueRegex = new RegExp('(https://gitlab.trimexa.de/' + setting.gitLabPath + '/-/issues/)(\\d+)', 'g');
+        const urlIssueRegex = new RegExp('(https://gitlab.trimexa.de/' + projectSettings.gitLabPath + '/-/issues/)(\\d+)', 'g');
         str = str.replace(
           urlIssueRegex,
-          (_, p1, p2) => setting.gitHubPath + issueReplacer(p2)
+          (_, p1, p2) => projectSettings.gitHubPath + issueReplacer(p2)
         );
 
         /// Replace gitlab project url with github project url
         str = str.replace(
-          `https://gitlab.trimexa.de/${setting.gitLabPath}`,
-          `https://github.com/${setting.gitHubPath}`
+          `https://gitlab.trimexa.de/${projectSettings.gitLabPath}`,
+          `https://github.com/${projectSettings.gitHubPath}`
         );
-      });
+      }
     }
 
     /// Replace some strings
@@ -1385,6 +1426,7 @@ export class GithubHelper {
     str = str.replace('marked this ', 'Marked this ');
     str = str.replace('changed due date', 'Changed due date');
     str = str.replace('moved to', 'Moved to');
+    str = str.replace('moved from', 'Moved from');
     str = str.replace('approved this', 'Approved this');
     str = str.replace('marked as', 'Marked as');
     str = str.replace('unmarked a', 'Unmarked a');
@@ -1506,6 +1548,7 @@ export class GithubHelper {
       this.repoId,
       settings.s3,
       this.gitlabHelper,
+      this.projectSettings,
     );
 
     return str;
@@ -1517,7 +1560,7 @@ export class GithubHelper {
    * Adds a line of text at the beginning of a comment that indicates who, when
    * and from GitLab.
    */
-  static addMigrationLine(str: string, item: any, repoLink: string): string {
+  static addMigrationLine(str: string, item: any, repoLink: string, addLine: boolean): string {
     if (!item || !item.author || !item.author.username || !item.created_at) {
       return str;
     }
@@ -1539,6 +1582,10 @@ export class GithubHelper {
     let hasGithubAccount = settings.usermap &&
       settings.usermap[item.author.username] &&
       settings.usermap[item.author.username].token;
+
+    if (str !== '' && (hasGithubAccount && !addLine)) {
+      return str;
+    }
 
     const author = hasGithubAccount ? '' : ` von @${item.author.username}`;
     const attribution = `> Via GitLab${author} am ${formattedDate}`;
@@ -1613,9 +1660,14 @@ export class GithubHelper {
       repo: githubRepo,
     };
 
-    await this.githubApi.repos.delete(params);
-
-    console.log('Repo deleted ' + githubRepo);
+    try {
+      console.log(`Deleting repo ${params.owner}/${params.repo}...`);
+      await this.githubApi.repos.delete(params);
+      console.log('\t...done.');
+    } catch (err) {
+      if (err.status == 404) console.log(' not found.');
+      else console.error(`\n\tSomething went wrong: ${err}.`);
+    }
   }
 
   /**
@@ -1656,4 +1708,29 @@ export class GithubHelper {
     }
     await utils.sleep(this.delayInMs);
   }
+}
+
+// function createReplacementIssue(issue: IssueImport) {
+//   var labels = [...new Set(issue.labels)];
+
+//   return {
+//     title: issue.title,
+//     body: issue.body,
+//     closed: issue.closed,
+//     assignee: issue.assignee,
+//     created_at: issue.created_at,
+//     updated_at: issue.updated_at,
+//     milestone: issue.milestone,
+//     labels: [...labels],
+//   };
+// }
+
+function createReplacementIssue(issue: IssueImport) {
+  let description = `The original issue\n\n\tTitle: ${issue.title}\n\ncould not be created.\nThis is a dummy issue, replacing the original one.`;
+
+  return {
+    title: `${issue.title} [REPLACEMENT ISSUE]`,
+    body: description,
+    closed: issue.closed,
+  };
 }

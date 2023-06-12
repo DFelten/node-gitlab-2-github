@@ -1,9 +1,18 @@
+import { GithubHelper } from "./githubHelper";
+import { GitlabHelper } from "./gitlabHelper";
+
 export default interface Settings {
-  allProjects: boolean;
+  createAllRepos: boolean;
+  projectId?: number;
   archiveProjects: boolean;
   createRepo: boolean;
   migrateRepo: boolean;
-  migrateComments: boolean;
+  addOnlyTopics: boolean;
+  importCommentsForIssueId?: number;
+  latestImportedIssueIdForComments?: number;
+  latestImportedMergeRequestId?: number;
+  latestImportedIssueId?: number;
+  ignoreIssuesForComments?: number[];
   debug: boolean;
   gitlab: GitlabSettings;
   github: GithubSettings;
@@ -18,6 +27,7 @@ export default interface Settings {
     milestones: boolean;
     labels: boolean;
     issues: boolean;
+    comments: boolean;
     mergeRequests: boolean;
     releases: boolean;
   };
@@ -25,6 +35,7 @@ export default interface Settings {
   usePlaceholderMilestonesForMissingMilestones: boolean;
   usePlaceholderIssuesForMissingIssues: boolean;
   useReplacementIssuesForCreationFails: boolean;
+  usePlaceholderIssuesForMissingMergeRequestBranches: boolean;
   useIssuesForAllMergeRequests: boolean;
   filterByLabel?: string;
   trimOversizedLabelDescriptions: boolean;
@@ -88,4 +99,10 @@ export interface ProjectSettings {
   archived: boolean;
   topics: string[];
   team: string;
+}
+
+export interface MigrationHelper {
+  projectSettings: ProjectSettings;
+  github: GithubHelper;
+  gitlab: GitlabHelper;
 }

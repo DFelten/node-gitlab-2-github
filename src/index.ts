@@ -1,5 +1,4 @@
-import { Gitlab } from '@gitbeaker/node';
-import settings, { projectSettings, setProjektSettings, setProjektSettingsList } from '../settings';
+import settings, { setProjektSettingsList } from '../settings';
 import {
   GithubHelper,
   MilestoneImport,
@@ -13,8 +12,9 @@ import csv from 'csv-parser';
 import * as fs from 'fs';
 import { default as readlineSync } from 'readline-sync';
 
+import { Gitlab } from '@gitbeaker/node';
 import AWS from 'aws-sdk';
-import { ProjectSettings } from './settings';
+import { MigrationHelper, ProjectSettings } from './settings';
 import { shellStuff } from './utils';
 // import { spawn } from 'child-process-promise';
 
@@ -48,190 +48,118 @@ if (
   process.exit(1);
 }
 
-var githubHelper: GithubHelper;
-var gitlabHelper: GitlabHelper;
-
-// Create a GitLab API object
-const gitlabApi = new Gitlab({
-  host: settings.gitlab.url ? settings.gitlab.url : 'http://gitlab.com',
-  token: settings.gitlab.token,
-});
-
 loopProjects();
 
 async function loopProjects() {
   console.log('Looping projects');
-  importProjectSettings().then(async (projectSettingsList) => {
-    if (settings.gitlab.projectsToCSV) {
-      new GitlabHelper(gitlabApi, settings.gitlab, projectSettingsList[0]).projectsToCSV();
-    } else if (settings.allProjects) {
-      projectSettingsList.forEach(async (project) => {
-        await setUpOrMigrate(project);
-      });
-    } else if (settings.archiveProjects) {
-      if (projectSettings.archived) {
-        shellStuff('gh repo archive ' + projectSettings.gitHubPath + ' -y');
-      }
-    } else if (settings.allProjects == false) {
-      var projectId = extractArguments('project');
-
-      if (projectId !== null) {
-        var project = projectSettingsList.find((project) => project.gitLabId === Number.parseInt(projectId));
-
-        if (project !== undefined) {
-          await setUpOrMigrate(project);
+  if (settings.createAllRepos) {
+    importProjectSettings('projects-imported.csv').then(async (projectSettingsList) => {
+      for (let projectSettings of projectSettingsList) {
+        if (projectSettings?.gitHubSlug !== null) {
+          await delay(2000);
+          await setUpRepo(getMigrationHelper(projectSettings), false);
         }
       }
-    }
-  });
-}
+    });
 
-async function setUpOrMigrate(projectSettings: ProjectSettings) {
-  setProjektSettings(projectSettings);
-  createHelpers(projectSettings);
+  } else if (settings.archiveProjects) {
+    importProjectSettings('projects-finished.csv').then(async (projectSettingsList) => {
+      for (let projectSettings of projectSettingsList) {
+        var migrationHelper = getMigrationHelper(projectSettings);
 
-  if (settings.createRepo) {
-    await setUpRepo(projectSettings);
+        if (migrationHelper.projectSettings.archived === true) {
+          await migrationHelper.github.archiveRepo();
+        }
+      }
+    });
+  } else if (settings.addOnlyTopics) {
+    importProjectSettings('projects-finished.csv').then(async (projectSettingsList) => {
+      for (let projectSettings of projectSettingsList) {
+        var migrationHelper = getMigrationHelper(projectSettings);
+
+        var topics = migrationHelper.projectSettings.topics;
+
+        if (topics !== undefined && topics.length > 0) {
+          await migrationHelper.github.addTopics(topics);
+        }
+      }
+    });
   } else {
-    if (settings.migrateRepo) {
-      await migrate();
-    }
+    importProjectSettings('projects.csv').then(async (projectSettingsList) => {
+      // if (settings.gitlab.projectsToCSV) {
+      //   new GitlabHelper(gitlabApi, settings.gitlab, projectSettingsList[0]).projectsToCSV();
+      // }
+      if (settings.projectId !== null) {
+        var projectSettings = projectSettingsList.find((project) => project.gitLabId === settings.projectId);
 
-    if (settings.migrateComments) {
-      await transferIssueComments();
-    }
+        if (projectSettings !== undefined) {
+          await setUpOrMigrate(getMigrationHelper(projectSettings));
+        }
+      }
+    });
   }
 }
 
-async function setUpRepo(projectSettings: ProjectSettings) {
-  console.log('Setting up repo for ' + projectSettings.gitLabPath);
+async function setUpOrMigrate(migrationHelper: MigrationHelper) {
+  // setProjektSettings(projectSettings);
 
-  shellStuff('git clone --mirror git@gitlab.trimexa.de:' + projectSettings.gitLabPath + '.git repos/' + projectSettings.gitLabPath, async () => {
+  if (settings.createRepo) {
+    await setUpRepo(migrationHelper, true);
+  } else {
+    await migrateRepo(migrationHelper);
+  }
+}
+
+async function migrateRepo(migrationHelper: MigrationHelper) {
+  if (settings.migrateRepo) {
+    await migrate(migrationHelper);
+  }
+
+  if (settings.transfer.comments) {
+    await transferIssueComments(migrationHelper);
+  }
+}
+
+async function setUpRepo(migrationHelper: MigrationHelper, shouldMigrateRepo: boolean = false) {
+  console.log('Setting up repo for ' + migrationHelper.projectSettings.gitLabPath);
+
+  shellStuff('git clone --mirror git@gitlab.trimexa.de:' + migrationHelper.projectSettings.gitLabPath + '.git repos/' + migrationHelper.projectSettings.gitLabPath, async () => {
     if (settings.github.recreateRepo === true) {
-      // await this.githubApi.repos.delete();
-      await githubHelper.deleteRepo(projectSettings.gitHubSlug);
+      await migrationHelper.github.deleteRepo(migrationHelper.projectSettings.gitHubSlug);
     }
 
-    var command = 'gh repo create ' + projectSettings.gitHubPath + ' --private';
+    var command = 'gh repo create ' + migrationHelper.projectSettings.gitHubPath + ' --private';
 
-    if (projectSettings.team != null && projectSettings.team != '') {
-      command += ' -t ' + projectSettings.team;
+    if (migrationHelper.projectSettings.team != null && migrationHelper.projectSettings.team != '') {
+      command += ' -t ' + migrationHelper.projectSettings.team;
     }
 
     shellStuff(command, async () => {
-      // if (settings.github.recreateRepo === true) {
-      //   await githubHelper.recreateRepo();
-      // }
+      shellStuff('git -C repos/' + migrationHelper.projectSettings.gitLabPath + ' push --no-verify --mirror git@github.com:' + migrationHelper.projectSettings.gitHubPath, async () => {
+        shellStuff('gh repo edit ' + migrationHelper.projectSettings.gitHubPath + ' --default-branch ' + migrationHelper.projectSettings.defaultBranch);
 
-      shellStuff('git -C repos/' + projectSettings.gitLabPath + ' push --no-verify --mirror git@github.com:' + projectSettings.gitHubPath, async () => {
-        shellStuff('gh repo edit ' + projectSettings.gitHubPath + ' --default-branch ' + projectSettings.defaultBranch);
+        await migrationHelper.github.addTopics(migrationHelper.projectSettings.topics);
 
-        await githubHelper.addTopics(projectSettings.topics);
 
-        await delay(2000);
+
+        if (shouldMigrateRepo === true) {
+          await delay(2000);
+
+          await migrateRepo(migrationHelper);
+        }
       });
     }, true);
   }, true);
 }
 
-// git@gitlab.trimexa.de:apps/TMX_iOS/Archive/Apps.git
-
-// var id = extractArguments('id');
-// var name = extractArguments('name');
-// var slug = extractArguments('slug');
-// var newSlug = extractArguments('new_slug');
-// var defaultBranch = extractArguments('default_branch');
-// var path = extractArguments('path');
-// var archived = extractArguments('archived') === 'TRUE';
-// var topics = extractArguments('topics');
-// var team = extractArguments('team');
-
-// var newSlug = 'ios-archive-apps';
-// var repoPath = 'apps/TMX_iOS/Archive/Apps';
-// var defaultBranch = 'master';
-// var team = 'app';
-// var isArchived = true;
-
-// var ghSlug = 'trimexa/' + newSlug;
-
-
-// shellStuff('git clone --mirror git@gitlab.trimexa.de:' + repoPath + '.git repos/' + repoPath, () => {
-//   var command = 'gh repo create ' + ghSlug + ' --private';
-
-//   if (team != null && team != '') {
-//     command += ' -t ' + team;
-//   }
-
-//   shellStuff(command, () => {
-//     shellStuff('git -C repos/' + repoPath + ' push --no-verify --mirror git@github.com:' + ghSlug, () => {
-//       shellStuff('gh repo edit ' + ghSlug + ' --default-branch ' + defaultBranch);
-
-//       shellStuff('gh repo archive ' + ghSlug + ' -y', () => {
-
-//         /// TODO INFOS AUS LISTE REINREICHEN UND NICHT AUS SETTING
-//         /// Archivieren erst nach dem GANZEN< SONST GEHTS NICHT!
-//         if (settings.github.recreateRepo === true) {
-//           recreate();
-//         }
-//         migrate();
-//       });
-//     });
-//   }, true);
-// }, true);
-
-
-function createHelpers(projectSettings: ProjectSettings) {
-  gitlabHelper = new GitlabHelper(gitlabApi, settings.gitlab, projectSettings);
-  githubHelper = new GithubHelper(
-    createOctokit(settings.github.token),
-    settings.github,
-    gitlabHelper,
-    settings.useIssuesForAllMergeRequests,
-  );
-}
-
-// If no project id is given in settings.js, just return
-// all of the projects that this user is associated with.
-
-// // 	git clone --mirror git@gitlab.trimexa.de:apps/flutter/github-migration-test.git
-// var cloneGitLabRepo = spawn('git', ['clone', '--mirror', 'git@gitlab.trimexa.de:' + repoPath + '.git', 'repos/' + repoPath]);
-// // 	gh repo create trimexa/github-migration-test -d 'Test Repository' --private -t Trimex
-
-// cloneGitLabRepo.on('close', function (code) {
-//   var args = ['repo', 'create', ghSlug, '--private'];
-
-//   if (team != null && team != '') {
-//     args.push('-t');
-//     args.push(team);
-//   }
-
-//   var createGitHubRepo = spawn('gh', args);
-
-//   cloneGitLabRepo.on('close', function (code) {
-//     // 	git push --no-verify --mirror 
-//     var mirrorRepo = spawn('git', ['-C', 'repos/' + repoPath, 'push', '--no-verify', '--mirror', 'git@github.com:' + ghSlug]);
-
-//     cloneGitLabRepo.on('close', function (code) {
-//       spawn('gh', ['repo', 'edit', ghSlug, '--default-branch', defaultBranch]);
-
-//       if (isArchived) {
-//         spawn('gh', ['repo', 'archive', ghSlug, '-y']);
-//       }
-//     });
-//   });
-// });
-
-
-// if (settings.gitlab.projectsToCSV) {
-//   gitlabHelper.projectsToCSV();
-// } else if (!settings.gitlab.projectId) {
-//   gitlabHelper.listProjects();
-// } else {
-//   // user has chosen a project
-//   if (settings.github.recreateRepo === true) {
-//     recreate();
-//   }
-//   migrate();
+// function createHelpers(projectSettings: ProjectSettings) {
+//   gitlabHelper = new GitlabHelper(gitlabApi, settings.gitlab, projectSettings);
+//   githubHelper = new GithubHelper(
+//     createOctokit(settings.github.token),
+//     settings.github,
+//     gitlabHelper,
+//     settings.useIssuesForAllMergeRequests,
+//   );
 // }
 
 // ----------------------------------------------------------------------------
@@ -239,7 +167,7 @@ function createHelpers(projectSettings: ProjectSettings) {
 /**
  * Asks for confirmation and maybe recreates the GitHub repository.
  */
-async function recreate() {
+async function recreate(githubHelper: GithubHelper) {
   readlineSync.setDefaultOptions({
     limit: ['no', 'yes'],
     limitMessage: 'Please enter yes or no',
@@ -313,44 +241,45 @@ function createReplacementIssue(issue: GitLabIssue) {
 /**
  * Performs all of the migration tasks to move a GitLab repo to GitHub
  */
-async function migrate() {
-  console.log('Migrate repo for ' + projectSettings.gitLabPath);
+async function migrate(migrationHelper: MigrationHelper) {
+  console.log('Migrate repo for ' + migrationHelper.projectSettings.gitLabPath);
   //
   // Sequentially transfer repo things
   //
 
   try {
-    await githubHelper.registerRepoId();
-    await gitlabHelper.registerProjectPath(projectSettings.gitLabId);
+    await migrationHelper.github.registerRepoId();
+    await migrationHelper.gitlab.registerProjectPath(migrationHelper.projectSettings.gitLabId);
 
     if (settings.transfer.description) {
-      await transferDescription();
+      await transferDescription(migrationHelper);
     }
 
     if (settings.transfer.milestones) {
       await transferMilestones(
+        migrationHelper,
         settings.usePlaceholderMilestonesForMissingMilestones
       );
     }
 
     if (settings.transfer.labels) {
-      await transferLabels(true, settings.conversion.useLowerCaseLabels);
+      await transferLabels(migrationHelper, true, settings.conversion.useLowerCaseLabels);
     }
 
     if (settings.transfer.releases) {
-      await transferReleases();
+      await transferReleases(migrationHelper);
     }
 
     // Important: do this before transferring the merge requests
     if (settings.transfer.issues) {
-      await transferIssues();
+      await transferIssues(migrationHelper);
     }
 
     if (settings.transfer.mergeRequests) {
       if (settings.mergeRequests.log) {
-        await logMergeRequests(settings.mergeRequests.logFile);
+        await logMergeRequests(migrationHelper, settings.mergeRequests.logFile);
       } else {
-        await transferMergeRequests();
+        await transferMergeRequests(migrationHelper);
       }
     }
   } catch (err) {
@@ -366,13 +295,13 @@ async function migrate() {
 /**
  * Transfer the description of the repository.
  */
-async function transferDescription() {
+async function transferDescription(migrationHelper: MigrationHelper) {
   inform('Transferring Description');
 
-  let project = await gitlabApi.Projects.show(projectSettings.gitLabId);
+  let project = await migrationHelper.gitlab.gitlabApi.Projects.show(migrationHelper.projectSettings.gitLabId);
 
   if (project.description) {
-    await githubHelper.updateRepositoryDescription(project.description);
+    await migrationHelper.github.updateRepositoryDescription(project.description);
     console.log('Done.');
   } else {
     console.log('Description is empty, nothing to transfer.')
@@ -384,19 +313,19 @@ async function transferDescription() {
 /**
  * Transfer any milestones that exist in GitLab that do not exist in GitHub.
  */
-async function transferMilestones(usePlaceholders: boolean) {
+async function transferMilestones(migrationHelper: MigrationHelper, usePlaceholders: boolean) {
   inform('Transferring Milestones');
 
   // Get a list of all milestones associated with this project
   // FIXME: don't use type join but ensure everything is milestoneImport
   let milestones: (GitLabMilestone | MilestoneImport)[] =
-    await gitlabApi.ProjectMilestones.all(projectSettings.gitLabId);
+    await migrationHelper.gitlab.gitlabApi.ProjectMilestones.all(migrationHelper.projectSettings.gitLabId);
 
   // sort milestones in ascending order of when they were created (by id)
   milestones = milestones.sort((a, b) => a.id - b.id);
 
   // get a list of the current milestones in the new GitHub repo (likely to be empty)
-  const githubMilestones = await githubHelper.getAllGithubMilestones();
+  const githubMilestones = await migrationHelper.github.getAllGithubMilestones();
   let lastMilestoneId = 0;
   milestones.forEach(milestone => {
     lastMilestoneId = Math.max(lastMilestoneId, milestone.iid);
@@ -428,7 +357,7 @@ async function transferMilestones(usePlaceholders: boolean) {
       });
     }
   }
-  await githubHelper.registerMilestoneMap(milestoneMap);
+  await migrationHelper.github.registerMilestoneMap(milestoneMap);
 
   // if a GitLab milestone does not exist in GitHub repo, create it.
 
@@ -438,7 +367,7 @@ async function transferMilestones(usePlaceholders: boolean) {
     );
     if (!foundMilestone) {
       console.log('Creating: ' + milestone.title);
-      await githubHelper
+      await migrationHelper.github
         .createMilestone(milestone)
         .then(created => {
           let m = milestoneMap.get(milestone.iid);
@@ -463,19 +392,19 @@ async function transferMilestones(usePlaceholders: boolean) {
 /**
  * Transfer any labels that exist in GitLab that do not exist in GitHub.
  */
-async function transferLabels(attachmentLabel = true, useLowerCase = true) {
+async function transferLabels(migrationHelper: MigrationHelper, attachmentLabel = true, useLowerCase = true) {
   inform('Transferring Labels');
   console.warn(CCWARN, 'NOTE (2022): GitHub descriptions are limited to 100 characters, and do not accept 4-byte Unicode');
 
   const invalidUnicode = /[\u{10000}-\u{10FFFF}]|(?![*#0-9]+)[\p{Emoji}\p{Emoji_Modifier}\p{Emoji_Component}\p{Emoji_Modifier_Base}\p{Emoji_Presentation}]/gu;
 
   // Get a list of all labels associated with this project
-  let labels: SimpleLabel[] = await gitlabApi.Labels.all(
-    projectSettings.gitLabId
+  let labels: SimpleLabel[] = await migrationHelper.gitlab.gitlabApi.Labels.all(
+    migrationHelper.projectSettings.gitLabId
   );
 
   // get a list of the current label names in the new GitHub repo (likely to be just the defaults)
-  let githubLabels: string[] = await githubHelper.getAllGithubLabelNames();
+  let githubLabels: string[] = await migrationHelper.github.getAllGithubLabelNames();
 
   // create a hasAttachment label for manual attachment migration
   if (attachmentLabel) {
@@ -525,7 +454,7 @@ async function transferLabels(attachmentLabel = true, useLowerCase = true) {
 
       try {
         // process asynchronous code in sequence
-        await githubHelper.createLabel(label).catch(x => { });
+        await migrationHelper.github.createLabel(label).catch(x => { });
       } catch (err) {
         console.error('Could not create label', label.name);
         console.error(err);
@@ -536,19 +465,38 @@ async function transferLabels(attachmentLabel = true, useLowerCase = true) {
   }
 }
 
-async function transferIssueComments() {
-  let issues = (await gitlabApi.Issues.all({
-    projectId: projectSettings.gitLabId,
+async function transferIssueComments(migrationHelper: MigrationHelper) {
+  let issues = (await migrationHelper.gitlab.gitlabApi.Issues.all({
+    projectId: migrationHelper.projectSettings.gitLabId,
     labels: settings.filterByLabel,
   })) as GitLabIssue[];
-
+  var test = settings;
   // sort issues in ascending order of their issue number (by iid)
   issues = issues.sort((a, b) => a.iid - b.iid);
 
-  for (let issue of issues) {
-    githubHelper.createCommentsForIssue(issue);
+  if (settings.importCommentsForIssueId !== undefined && settings.importCommentsForIssueId !== null) {
+    var importCommentsForIssueId = settings.importCommentsForIssueId;
+
+    const issue = issues.find(({ iid }) => iid === importCommentsForIssueId);
+
+    if (issue !== null) {
+      await migrationHelper.github.createCommentsForIssue(issue);
+    }
+  } else {
+    for (let issue of issues) {
+      if (!(settings.ignoreIssuesForComments?.includes(issue.iid))) {
+        // if (settings.latestImportedIssueIdForComments === undefined || issue.iid <= settings.latestImportedIssueIdForComments) {
+        if (settings.latestImportedIssueIdForComments === undefined || issue.iid > settings.latestImportedIssueIdForComments) {
+          if (issue.iid <= 410) {
+
+            await migrationHelper.github.createCommentsForIssue(issue);
+          }
+        }
+      }
+    }
   }
 
+  console.log(`Comments migrated (${new Date()})`);
 }
 
 // ----------------------------------------------------------------------------
@@ -556,15 +504,15 @@ async function transferIssueComments() {
 /**
  * Transfer any issues and their comments that exist in GitLab that do not exist in GitHub.
  */
-async function transferIssues() {
+async function transferIssues(migrationHelper: MigrationHelper) {
   inform('Transferring Issues');
 
-  await githubHelper.registerMilestoneMap();
+  await migrationHelper.github.registerMilestoneMap();
 
   // get a list of all GitLab issues associated with this project
   // TODO return all issues via pagination
-  let issues = (await gitlabApi.Issues.all({
-    projectId: projectSettings.gitLabId,
+  let issues = (await migrationHelper.gitlab.gitlabApi.Issues.all({
+    projectId: migrationHelper.projectSettings.gitLabId,
     labels: settings.filterByLabel,
   })) as GitLabIssue[];
 
@@ -572,7 +520,7 @@ async function transferIssues() {
   issues = issues.sort((a, b) => a.iid - b.iid);
 
   // get a list of the current issues in the new GitHub repo (likely to be empty)
-  let githubIssues = await githubHelper.getAllGithubIssues();
+  let githubIssues = await migrationHelper.github.getAllGithubIssues();
 
   console.log(`Transferring ${issues.length} issues.`);
 
@@ -601,46 +549,49 @@ async function transferIssues() {
 
   // if a GitLab issue does not exist in GitHub repo, create it -- along with comments.
   for (let issue of issues) {
-    // try to find a GitHub issue that already exists for this GitLab issue
-    let githubIssue = githubIssues.find(
-      i => i.title.trim() === issue.title.trim()
-    );
-    if (!githubIssue) {
-      console.log(`\nMigrating issue #${issue.iid} ('${issue.title}')...`);
-      try {
-        // process asynchronous code in sequence -- treats the code sort of like blocking
-        await githubHelper.createIssueAndComments(issue);
-        console.log(`\t...DONE migrating issue #${issue.iid}.`);
-      } catch (err) {
-        console.log(`\t...ERROR while migrating issue #${issue.iid}.`);
+    if (settings.latestImportedIssueId === undefined || issue.iid > settings.latestImportedIssueId) {
+      // try to find a GitHub issue that already exists for this GitLab issue
+      let githubIssue = githubIssues.find(
+        i => i.title.trim() === issue.title.trim()
+      );
+      if (!githubIssue) {
+        console.log(`\nMigrating issue #${issue.iid} ('${issue.title}')...`);
+        try {
+          // process asynchronous code in sequence -- treats the code sort of like blocking
+          await migrationHelper.github.createIssueAndComments(issue);
+          console.log(`\t...DONE migrating issue #${issue.iid}.`);
+        } catch (err) {
+          console.log(`\t...ERROR while migrating issue #${issue.iid}.`);
 
-        console.error('DEBUG:\n', err); // TODO delete this after issue-migration-fails have been fixed
+          console.error('DEBUG:\n', err); // TODO delete this after issue-migration-fails have been fixed
 
-        if (settings.useReplacementIssuesForCreationFails) {
-          console.log('\t-> creating a replacement issue...');
-          const replacementIssue = createReplacementIssue(issue);
-          try {
-            await githubHelper.createIssueAndComments(
-              replacementIssue as GitLabIssue,
-            ); // HACK: remove type coercion
+          if (settings.useReplacementIssuesForCreationFails) {
+            console.log('\t-> creating a replacement issue...');
+            const replacementIssue = createReplacementIssue(issue);
+            try {
+              await migrationHelper.github.createIssueAndComments(
+                replacementIssue as GitLabIssue,
+              ); // HACK: remove type coercion
 
-            counters.nrOfReplacementIssues++;
-            console.error('\t...DONE.');
-          } catch (err) {
-            counters.nrOfFailedIssues++;
-            console.error(
-              '\t...ERROR: Could not create replacement issue either!'
-            );
+              counters.nrOfReplacementIssues++;
+              console.error('\t...DONE.');
+            } catch (err) {
+              counters.nrOfFailedIssues++;
+              console.error(
+                '\t...ERROR: Could not create replacement issue either!'
+              );
+            }
           }
         }
-      }
-    } else {
-      console.log(`Updating issue #${issue.iid} - ${issue.title}...`);
-      try {
-        await githubHelper.updateIssueState(githubIssue, issue);
-        console.log(`...Done updating issue #${issue.iid}.`);
-      } catch (err) {
-        console.log(`...ERROR while updating issue #${issue.iid}.`);
+
+      } else {
+        console.log(`Updating issue #${issue.iid} - ${issue.title}...`);
+        try {
+          await migrationHelper.github.updateIssueState(githubIssue, issue);
+          console.log(`...Done updating issue #${issue.iid}.`);
+        } catch (err) {
+          console.log(`...ERROR while updating issue #${issue.iid}.`);
+        }
       }
     }
   }
@@ -665,15 +616,15 @@ async function transferIssues() {
  *        GitHub treats pull requests as issues, therefore their numbers are changed
  * @returns {Promise<void>}
  */
-async function transferMergeRequests() {
+async function transferMergeRequests(migrationHelper: MigrationHelper) {
   inform('Transferring Merge Requests');
 
-  await githubHelper.registerMilestoneMap();
+  await migrationHelper.github.registerMilestoneMap();
 
   // Get a list of all pull requests (merge request equivalent) associated with
   // this project
-  let mergeRequests = await gitlabApi.MergeRequests.all({
-    projectId: projectSettings.gitLabId,
+  let mergeRequests = await migrationHelper.gitlab.gitlabApi.MergeRequests.all({
+    projectId: migrationHelper.projectSettings.gitLabId,
     labels: settings.filterByLabel,
   });
 
@@ -682,11 +633,11 @@ async function transferMergeRequests() {
 
   // Get a list of the current pull requests in the new GitHub repo (likely to
   // be empty)
-  let githubPullRequests = await githubHelper.getAllGithubPullRequests();
+  let githubPullRequests = await migrationHelper.github.getAllGithubPullRequests();
 
   // get a list of the current issues in the new GitHub repo (likely to be empty)
   // Issues are sometimes created from Gitlab merge requests. Avoid creating duplicates.
-  let githubIssues = await githubHelper.getAllGithubIssues();
+  let githubIssues = await migrationHelper.github.getAllGithubIssues();
 
   console.log(
     'Transferring ' + mergeRequests.length.toString() + ' merge requests'
@@ -699,52 +650,54 @@ async function transferMergeRequests() {
   // if a GitLab merge request does not exist in GitHub repo, create it -- along
   // with comments
   for (let mr of mergeRequests) {
-    // Try to find a GitHub pull request that already exists for this GitLab
-    // merge request
-    let githubRequest = githubPullRequests.find(
-      i => i.title.trim() === mr.title.trim()
-    );
-    let githubIssue = githubIssues.find(
-      // allow for issues titled "Original Issue Name - [merged|closed]"
-      i => {
-        // regex needs escaping in case merge request title contains special characters
-        const regex = new RegExp(escapeRegExp(mr.title.trim()) + ' - \\[(merged|closed)\\]');
-        return regex.test(i.title.trim());
-      }
-    );
-    if (!githubRequest && !githubIssue) {
-      if (settings.skipMergeRequestStates.includes(mr.state)) {
-        console.log(
-          `Skipping MR ${mr.iid} in "${mr.state}" state: ${mr.title}`
-        );
-        continue;
-      }
-      console.log('Creating pull request: !' + mr.iid + ' - ' + mr.title);
-      try {
-        // process asynchronous code in sequence
-        await githubHelper.createPullRequestAndComments(mr);
-      } catch (err) {
-        console.error(
-          'Could not create pull request: !' + mr.iid + ' - ' + mr.title
-        );
-        console.error(err);
-      }
-    } else {
-      if (githubRequest) {
-        console.log(
-          'Gitlab merge request already exists (as github pull request): ' +
-          mr.iid +
-          ' - ' +
-          mr.title
-        );
-        githubHelper.updatePullRequestState(githubRequest, mr);
+    if (settings.latestImportedMergeRequestId === undefined || mr.iid > settings.latestImportedMergeRequestId) {
+      // Try to find a GitHub pull request that already exists for this GitLab
+      // merge request
+      let githubRequest = githubPullRequests.find(
+        i => i.title.trim() === mr.title.trim()
+      );
+      let githubIssue = githubIssues.find(
+        // allow for issues titled "Original Issue Name - [merged|closed]"
+        i => {
+          // regex needs escaping in case merge request title contains special characters
+          const regex = new RegExp(escapeRegExp(mr.title.trim()) + ' - \\[(merged|closed)\\]');
+          return regex.test(i.title.trim());
+        }
+      );
+      if (!githubRequest && !githubIssue) {
+        if (settings.skipMergeRequestStates.includes(mr.state)) {
+          console.log(
+            `Skipping MR ${mr.iid} in "${mr.state}" state: ${mr.title}`
+          );
+          continue;
+        }
+        console.log('Creating pull request: !' + mr.iid + ' - ' + mr.title);
+        try {
+          // process asynchronous code in sequence
+          await migrationHelper.github.createPullRequestAndComments(mr);
+        } catch (err) {
+          console.error(
+            'Could not create pull request: !' + mr.iid + ' - ' + mr.title
+          );
+          console.error(err);
+        }
       } else {
-        console.log(
-          'Gitlab merge request already exists (as github issue): ' +
-          mr.iid +
-          ' - ' +
-          mr.title
-        );
+        if (githubRequest) {
+          console.log(
+            'Gitlab merge request already exists (as github pull request): ' +
+            mr.iid +
+            ' - ' +
+            mr.title
+          );
+          migrationHelper.github.updatePullRequestState(githubRequest, mr);
+        } else {
+          console.log(
+            'Gitlab merge request already exists (as github issue): ' +
+            mr.iid +
+            ' - ' +
+            mr.title
+          );
+        }
       }
     }
   }
@@ -757,11 +710,11 @@ async function transferMergeRequests() {
  * and creates them on github one by one
  * @returns {Promise<void>}
  */
-async function transferReleases() {
+async function transferReleases(migrationHelper: MigrationHelper) {
   inform('Transferring Releases');
 
   // Get a list of all releases associated with this project
-  let releases = await gitlabApi.Releases.all(projectSettings.gitLabId);
+  let releases = await migrationHelper.gitlab.gitlabApi.Releases.all(migrationHelper.projectSettings.gitLabId);
 
   // Sort releases in ascending order of their release date
   releases = releases.sort((a, b) => {
@@ -778,7 +731,7 @@ async function transferReleases() {
   for (let release of releases) {
     // Try to find an existing github release that already exists for this GitLab
     // release
-    let githubRelease = await githubHelper.getReleaseByTag(release.tag_name);
+    let githubRelease = await migrationHelper.github.getReleaseByTag(release.tag_name);
 
     if (!githubRelease) {
       console.log(
@@ -786,7 +739,7 @@ async function transferReleases() {
       );
       try {
         // process asynchronous code in sequence
-        await githubHelper.createRelease(
+        await migrationHelper.github.createRelease(
           release.tag_name,
           release.name,
           release.description,
@@ -817,13 +770,13 @@ async function transferReleases() {
 /**
  * logs merge requests that exist in GitLab to a file.
  */
-async function logMergeRequests(logFile: string) {
+async function logMergeRequests(migrationHelper: MigrationHelper, logFile: string) {
   inform('Logging Merge Requests');
 
   // get a list of all GitLab merge requests associated with this project
   // TODO return all MRs via pagination
-  let mergeRequests = await gitlabApi.MergeRequests.all({
-    projectId: projectSettings.gitLabId,
+  let mergeRequests = await migrationHelper.gitlab.gitlabApi.MergeRequests.all({
+    projectId: migrationHelper.projectSettings.gitLabId,
     labels: settings.filterByLabel,
   });
 
@@ -833,12 +786,12 @@ async function logMergeRequests(logFile: string) {
   console.log('Logging ' + mergeRequests.length.toString() + ' merge requests');
 
   for (let mr of mergeRequests) {
-    let mergeRequestDiscussions = await gitlabApi.MergeRequestDiscussions.all(
-      projectSettings.gitLabId,
+    let mergeRequestDiscussions = await migrationHelper.gitlab.gitlabApi.MergeRequestDiscussions.all(
+      migrationHelper.projectSettings.gitLabId,
       mr.iid
     );
-    let mergeRequestNotes = await gitlabApi.MergeRequestNotes.all(
-      projectSettings.gitLabId,
+    let mergeRequestNotes = await migrationHelper.gitlab.gitlabApi.MergeRequestNotes.all(
+      migrationHelper.projectSettings.gitLabId,
       mr.iid,
       {}
     );
@@ -870,10 +823,10 @@ function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
 }
 
-export async function importProjectSettings(): Promise<ProjectSettings[]> {
+export async function importProjectSettings(file: string): Promise<ProjectSettings[]> {
   var projectSettingsList: ProjectSettings[] = [];
 
-  const projects = await readCSVFile('projects.csv');
+  const projects = await readCSVFile(file);
 
   projects.forEach(function (project) {
     var newSlug = project['new_slug'] !== '' ? project['new_slug'] : project['slug'];
@@ -918,4 +871,25 @@ function extractArguments(arg: string) {
 
 function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getMigrationHelper(projectSettings: ProjectSettings): MigrationHelper {
+  const gitlabApi = new Gitlab({
+    host: settings.gitlab.url ? settings.gitlab.url : 'http://gitlab.com',
+    token: settings.gitlab.token,
+  });
+
+  var gitlabHelper = new GitlabHelper(gitlabApi, settings.gitlab, projectSettings);
+
+  return {
+    projectSettings: projectSettings,
+    gitlab: gitlabHelper,
+    github: new GithubHelper(
+      createOctokit(settings.github.token),
+      settings.github,
+      gitlabHelper,
+      settings.useIssuesForAllMergeRequests,
+      projectSettings,
+    ),
+  };
 }
